@@ -309,6 +309,13 @@
       "when": 1795736581728,
       "tag": "0043_dated_instructor_memos",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1795750707172,
+      "tag": "0044_note_views",
+      "breakpoints": true
     }
   ]
 }

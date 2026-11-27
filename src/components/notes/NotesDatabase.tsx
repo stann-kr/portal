@@ -120,6 +120,8 @@ function NotesTable({ rows, returnTo, sort, onSort, now }: {
   onSort: (key: NotesSortKey) => void;
   now?: number;
 }) {
+  // 관리자 화면만 행에 학생 열람을 넣는다(0044).
+  const showViews = rows.some((row) => row.viewedLabel !== undefined);
   return (
     <table className="w-full table-fixed border-collapse text-body">
       <caption className="sr-only">노트 표. 열 머리를 눌러 정렬합니다.</caption>
@@ -129,6 +131,7 @@ function NotesTable({ rows, returnTo, sort, onSort, now }: {
           <SortableHeader column="date" sort={sort} onSort={onSort} className="w-[140px]" />
           <SortableHeader column="updated" sort={sort} onSort={onSort} className="w-[160px]" />
           <SortableHeader column="author" sort={sort} onSort={onSort} className="w-[100px]" />
+          {showViews ? <th scope="col" className="h-9 w-[120px] px-2 text-left text-xs font-normal text-muted-foreground">학생 열람</th> : null}
         </tr>
       </thead>
       <tbody>
@@ -149,6 +152,11 @@ function NotesTable({ rows, returnTo, sort, onSort, now }: {
             <td className="truncate px-2 font-mono text-xs text-secondary-foreground">{toLedgerDateLabel(row.dateLabel)}</td>
             <td className="truncate px-2 text-ui text-muted-foreground">{formatListUpdatedLabel(row, now)}</td>
             <td className="truncate px-2 text-ui text-secondary-foreground">{row.authorName ?? "—"}</td>
+            {showViews ? (
+              <td className="truncate px-2 text-ui text-muted-foreground" data-testid="note-viewed">
+                {row.viewedLabel ?? <span className="text-muted-foreground/70">아직 안 봄</span>}
+              </td>
+            ) : null}
           </tr>
         ))}
       </tbody>

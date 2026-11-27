@@ -20,6 +20,8 @@ import { getNoteSearchQuery, NoteSearch } from "@/components/notes/NoteSearch";
 import { NotesStudentFilter } from "@/components/notes/NotesStudentFilter";
 import { NotesEmptyState } from "@/components/notes/PrivateNoteList";
 import { getAllStudentNotes } from "@/lib/actions/all-notes";
+import { getNoteViews } from "@/lib/actions/noteViews";
+import { formatNoteViewed } from "@/components/notes/note-display";
 import { ALL_NOTE_KIND_LABELS, ALL_NOTES_PAGE_SIZE } from "@/lib/all-notes-query";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { toNotesDatabaseRow } from "@/lib/notes-database";
@@ -52,11 +54,15 @@ export default async function AdminAllNotesPage({
     cursor: firstSearchValue(params.cursor),
   });
   const labels = new Map(students.map((student) => [student.id, getUnifiedItemSpaceLabel(student)]));
+  const now = getRequestNow();
+  // 학생 열람(관리자만, 0044): 노트마다 가장 최근에 연 학생의 시각. 그룹 노트는 멤버 중 가장 최근.
+  const views = await getNoteViews(notes.map((note) => note.id));
   const rows: AllNotesTableRow[] = notes.map((note) => ({
     // 서버가 이미 짧은 미리보기(검색이면 일치 주변)를 만들었으므로 본문 HTML 없이 행을 만든다.
     ...toNotesDatabaseRow({ ...note, contentHtml: "", searchPreview: note.preview }),
     studentLabel: note.groupName ? formatGroupLabel(note.groupName) : labels.get(note.studentId) ?? "학생",
     kindLabel: ALL_NOTE_KIND_LABELS[note.kind],
+    viewedLabel: views[note.id]?.[0] ? formatNoteViewed(views[note.id][0].lastViewedAt, now) : null,
   }));
 
   const search = new URLSearchParams();
@@ -142,7 +148,7 @@ export default async function AdminAllNotesPage({
               ) : null}
             </NotesEmptyState>
           ) : (
-            <AllNotesTable rows={rows} returnTo={returnTo} now={getRequestNow()} />
+            <AllNotesTable rows={rows} returnTo={returnTo} now={now} />
           )}
           {continued || nextCursor ? (
             <nav aria-label="노트 페이지" className="flex items-center justify-between gap-3 pt-2">

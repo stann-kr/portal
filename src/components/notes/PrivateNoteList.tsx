@@ -66,6 +66,7 @@ export function NoteRowList({ rows, returnTo, now }: { rows: NotesDatabaseRow[];
             <span className="truncate text-ui text-secondary-foreground">{row.preview}</span>
             <span className="text-xs text-muted-foreground">
               {row.authorName ?? "작성자 미상"} · {formatListUpdatedLabel(row, now)} 수정
+              {row.viewedLabel !== undefined ? ` · ${row.viewedLabel ? `${row.viewedLabel} 열람` : "학생 안 봄"}` : null}
             </span>
           </Link>
         </li>

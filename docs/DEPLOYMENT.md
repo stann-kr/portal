@@ -32,7 +32,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0043`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0044`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -53,6 +53,7 @@
 | 시점 구간 | `0041`의 `feedbacks.time_marker_end`·`comments.time_marker_end_seconds`(nullable, CHECK) 칸 추가 | 대상 D1의 `0041` 적용과 `PRAGMA table_info(feedbacks)`·`PRAGMA table_info(comments)`, 처음에는 모두 NULL(`SELECT COUNT(*) FROM feedbacks WHERE time_marker_end IS NOT NULL` = 0, 댓글도 같음) |
 | 마감 없는 정기 과제 | `0042`의 `assignment_recurrences.has_due`(NOT NULL 기본 1, CHECK) | 대상 D1의 `0042` 적용과 `PRAGMA table_info(assignment_recurrences)`, 처음에는 모두 1(`SELECT COUNT(*) FROM assignment_recurrences WHERE has_due <> 1` = 0) |
 | 날짜별 수업 메모 | `0043`의 `instructor_memos.memo_date`(nullable, CHECK), 학생 메모 unique index 재생성, 학생·날짜 unique index | 대상 D1의 `0043` 적용과 `PRAGMA table_info(instructor_memos)`, `PRAGMA index_list(instructor_memos)`(student_unique·student_date_unique), 처음에는 모두 NULL |
+| 노트 학생 열람 | `0044`의 `note_views` 새 표(노트·학생 복합 기본키, FK cascade 둘)와 학생 index | 대상 D1의 `0044` 적용과 `PRAGMA table_info(note_views)`·`PRAGMA foreign_key_list(note_views)`, 처음에는 빈 표 |
 | 노트 읽기 전용·버전 편집자 | `0036`의 `private_notes.student_read_only`(기본 0)·`private_note_revisions.contributor_ids`(nullable) 칸 추가 | 대상 D1의 `0036` 적용과 `PRAGMA table_info(private_notes)`·`PRAGMA table_info(private_note_revisions)`, 모든 노트가 0인지(`SELECT COUNT(*) FROM private_notes WHERE student_read_only <> 0`) |
 | 그룹레슨 | `0029` 그룹·멤버 table과 `private_notes.group_id`, `0030` `document_tombstones.group_id`와 media UPDATE trigger 넷 재생성 | 대상 D1의 `0029`·`0030` 적용과 `lesson_groups`·`lesson_group_members` 존재, 관리자 학생 목록의 그룹 만들기 |
 | 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
@@ -215,6 +216,15 @@ iCloud 연동:
 4. 새 secret·binding·DO class 변경은 없다. 운영 smoke는 read-only로 한다.
 5. 되돌리기(이전 코드로 돌아가면): 구간 피드백·댓글은 시작 한 점으로 보이고 끝은 칸에 남는다. 이전 코드로 구간 피드백의 시점을 끝 이후로 옮기거나 비우면 CHECK가 저장을 거절한다(오류로 끝나고 행은 바뀌지 않는다). 그런 피드백은 새 코드로 다시 올린 뒤 고치면 된다. 수업 노트의 `[a~b]` 글자는 꾸밈 없는 글자로 남는다.
 6. 새 개인정보 항목은 없다(이미 있는 재생 시점에 끝 시점 하나를 더할 뿐이다).
+
+### 노트 학생 열람 gate (2026-11-27)
+
+1. 원격 D1에 `0044_note_views`를 **코드보다 먼저** 적용한다(Time Travel bookmark 먼저, `0043` 적용 뒤). 새 표 하나와 index뿐이라 기존 표·trigger는 그대로이고 이전 코드는 이 표를 읽지 않는다.
+2. 순서를 바꾸면 안 된다. 새 코드가 표 없이 나가면 관리자 노트 문서·전체 노트·학생 상세 노트가 오류가 된다(학생 기록은 실패를 무시한다).
+3. 적용 뒤 read-only로 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`, `PRAGMA table_info(note_views)`, `PRAGMA foreign_key_list(note_views)`, `SELECT COUNT(*) FROM note_views`(0), `PRAGMA foreign_key_check`(빈 결과)를 본다.
+4. 새 secret·binding·DO class 변경은 없다. 운영 smoke는 read-only로 한다.
+5. 되돌리기(이전 코드로 돌아가면): 열람은 더 남지 않고 표의 행은 그대로 남는다. 표는 다른 표에서 참조하지 않는다.
+6. 새 개인정보 항목: 학생이 노트를 마지막으로 연 시각(관리자만 보고, 노트·계정 삭제 때 함께 지운다). `/privacy`의 수집 항목에 "노트 열람"을 더했다.
 
 ### 마감 없음·날짜별 메모 gate (2026-11-27)
 

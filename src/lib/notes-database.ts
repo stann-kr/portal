@@ -48,6 +48,11 @@ export type NotesDatabaseRow = {
   /** 서버에서 KST로 만든 표시 문자열(hydration 중 Intl 차이를 피한다). */
   dateLabel: string;
   updatedLabel: string;
+  /**
+   * 학생 열람(관리자 화면에서만 서버가 채운다, 0044). 문자열은 마지막으로 연 때, null은 아직 안 봄.
+   * 학생 화면에는 이 칸을 넣지 않으므로(undefined) 목록에 아무것도 나오지 않는다.
+   */
+  viewedLabel?: string | null;
 };
 
 const DATE_LABEL_OPTIONS: Intl.DateTimeFormatOptions = { year: "numeric", month: "short", day: "numeric" };

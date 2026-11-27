@@ -183,6 +183,14 @@ mock.module("@/lib/actions/students", { namedExports: {
   getStudentOptions: async () => [],
 } });
 
+// 학생이 패널에서 노트를 열면 열람(관리자만 보기, 0044)을 남긴다.
+const recordedNoteViews: string[] = [];
+mock.module("@/lib/actions/noteViews", { namedExports: {
+  recordNoteView: async (noteId: string) => { recordedNoteViews.push(noteId); },
+  // 관리자 학생 상세 노트 목록: 선택한 학생이 old-note를 연 기록 하나.
+  getNoteViews: async () => ({ "old-note": [{ studentId: "student-selected", lastViewedAt: new Date("2020-01-02T00:00:00Z") }] }),
+} });
+
 mock.module("@/lib/actions/privateNotes", { namedExports: {
   restorePrivateNoteRevision: (...args: Parameters<typeof restoreNote>) => restoreNote(...args),
   trashPrivateNote: (...args: Parameters<typeof changeNoteLifecycle>) => changeNoteLifecycle(...args),
@@ -521,6 +529,9 @@ test("학생·관리자 노트 검색은 본문을 찾고 상세·작성·휴지
     assert.equal(notePageTargets.at(-1), studentId);
     assert.match(harness.container.textContent ?? "", /전체 2개 중 1개/u);
     assert.equal(harness.container.querySelectorAll('ul[aria-label="노트 목록"] li').length, 1);
+    // 학생 열람(0044)은 관리자 목록에만 보인다.
+    if (role === "admin") assert.match(harness.container.textContent ?? "", /01\.02 09:00 열람/u);
+    else assert.doesNotMatch(harness.container.textContent ?? "", /열람|안 봄/u);
     const form = harness.container.querySelector('form[role="search"]')!;
     assert.equal(form.getAttribute("action"), base);
     assert.equal(form.getAttribute("method"), "get");
@@ -1237,6 +1248,7 @@ test("캘린더 패널에서 작성자는 노트를 바로 고치고 저장 결�
   assert.ok(busy.includes(true), "저장하는 동안 패널을 닫지 못하게 알린다");
   assert.equal(busy.at(-1), false);
   assert.match(harness.container.textContent ?? "", /전체 화면으로 열기/u);
+  assert.ok(recordedNoteViews.includes("panel-note"), "학생이 패널에서 노트를 열면 열람을 남긴다");
 });
 
 // 2026-11-23 사용자 결정: 이전에는 Stann이 만든 노트가 학생 패널에서 읽기 전용이었다. 이제 노트 주인 학생은 바로 고친다.

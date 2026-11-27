@@ -1438,6 +1438,28 @@ export const postReads = sqliteTable(
 );
 
 /**
+ * 학생이 노트 문서를 마지막으로 연 시각(0044). 학생마다 노트당 한 줄이고 열 때마다 갱신한다(1분 안에 다시 열면 그대로).
+ * 관리자만 읽는다(2026-11-27 사용자 요청 "일반 노트도 최근 열람 시간 … 나만 볼 수 있게"). 관리자가 연 것은 남기지 않는다.
+ * 노트 영구 삭제와 계정 삭제 때 함께 지워진다.
+ */
+export const noteViews = sqliteTable(
+  "note_views",
+  {
+    noteId: text("note_id")
+      .references(() => privateNotes.id, { onDelete: "cascade" })
+      .notNull(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    lastViewedAt: integer("last_viewed_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.noteId, table.studentId] }),
+    index("note_views_student_idx").on(table.studentId),
+  ],
+);
+
+/**
  * 학생이 제출 전에 쓰던 과제 글의 계정 사본(0035). 다른 기기에서도 이어 쓰도록 계정에 한 벌만 둔다(2026-11-23 사용자 결정).
  * draft_key는 `task-submission:<과제>`·`analysis:<과제>`·`free-submission:<제출|new>` 세 모양이고, 과제 글이면 task_id도 둔다
  * (과제를 지우면 함께 지워진다). version은 기기 사이 덮어쓰기를 막는 compare-and-set 값이다.

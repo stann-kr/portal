@@ -69,6 +69,7 @@ import { validateGuideCollabLifecycleUpgrade } from "./migration-check/guide-col
 import { validateTimestampRangesUpgrade } from "./migration-check/timestamp-ranges.mjs";
 import { validateAssignmentNoDueUpgrade } from "./migration-check/assignment-no-due.mjs";
 import { validateDatedInstructorMemosUpgrade } from "./migration-check/dated-instructor-memos.mjs";
+import { validateNoteViewsUpgrade } from "./migration-check/note-views.mjs";
 import { validateListQueryIndexesUpgrade } from "./migration-check/list-query-indexes.mjs";
 import {
   validateAccountPrivacyAtomicSource,
@@ -245,6 +246,8 @@ async function main() {
   console.log("PASS populated 0041 → 0042 assignment_recurrences has_due default 1 (no-due rules keep due_time 23:59), other tables/triggers and rows preserved, old-code insert/update keeps 1");
   await validateDatedInstructorMemosUpgrade(migrationFiles);
   console.log("PASS populated 0042 → 0043 instructor_memos memo_date (one per student·date, not with a note), student memo unique narrowed to undated rows, other tables/triggers and rows preserved");
+  await validateNoteViewsUpgrade(migrationFiles);
+  console.log("PASS populated 0043 → 0044 note_views (one per note·student, last viewed time), cascades with note and profile, other tables/triggers and rows preserved");
 }
 
 try {
