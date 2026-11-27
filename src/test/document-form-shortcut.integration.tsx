@@ -187,7 +187,8 @@ mock.module("@/lib/actions/students", { namedExports: {
 const recordedNoteViews: string[] = [];
 mock.module("@/lib/actions/noteViews", { namedExports: {
   recordNoteView: async (noteId: string) => { recordedNoteViews.push(noteId); },
-  getNoteViews: async () => ({}),
+  // 관리자 학생 상세 노트 목록: 선택한 학생이 old-note를 연 기록 하나.
+  getNoteViews: async () => ({ "old-note": [{ studentId: "student-selected", lastViewedAt: new Date("2020-01-02T00:00:00Z") }] }),
 } });
 
 mock.module("@/lib/actions/privateNotes", { namedExports: {
@@ -528,6 +529,9 @@ test("학생·관리자 노트 검색은 본문을 찾고 상세·작성·휴지
     assert.equal(notePageTargets.at(-1), studentId);
     assert.match(harness.container.textContent ?? "", /전체 2개 중 1개/u);
     assert.equal(harness.container.querySelectorAll('ul[aria-label="노트 목록"] li').length, 1);
+    // 학생 열람(0044)은 관리자 목록에만 보인다.
+    if (role === "admin") assert.match(harness.container.textContent ?? "", /01\.02 09:00 열람/u);
+    else assert.doesNotMatch(harness.container.textContent ?? "", /열람|안 봄/u);
     const form = harness.container.querySelector('form[role="search"]')!;
     assert.equal(form.getAttribute("action"), base);
     assert.equal(form.getAttribute("method"), "get");

@@ -4,15 +4,12 @@
  */
 "use server";
 
-import { inArray, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { createDb } from "@/db/client";
-import { noteViews } from "@/db/schema";
 import { requireAdmin, requireAuth } from "@/lib/auth-guard";
 
 /** 이보다 빨리 다시 열면(새로고침·뒤로가기) 시각을 바꾸지 않는다. */
 const NOTE_VIEW_REFRESH_SECONDS = 60;
-/** 한 번에 읽는 노트 수. D1 bind 변수 한도(100) 아래로 나눠 읽는다. */
-const NOTE_VIEW_READ_CHUNK = 90;
 
 /**
  * 학생이 노트 문서를 열었을 때 부른다. 볼 수 있는 노트(휴지통이 아닌 자기 개인 노트, 지금 멤버인 그룹 노트)만 남긴다.
@@ -42,20 +39,31 @@ export async function recordNoteView(noteId: string): Promise<void> {
 
 export type NoteViewEntry = { studentId: string; lastViewedAt: Date };
 
-/** 관리자 전용: 노트마다 학생별 마지막 열람(최근 순). 기록이 없는 노트는 빈 목록이다. */
+/**
+ * 관리자 전용: 노트마다 학생별 마지막 열람(최근 순). 기록이 없는 노트는 빠진다.
+ * 지금 볼 수 있는 학생만 센다: 개인 노트는 그 학생, 그룹 노트는 지금 멤버(그룹에서 빠진 학생의 예전 기록은 숨긴다).
+ */
 export async function getNoteViews(noteIds: readonly string[]): Promise<Record<string, NoteViewEntry[]>> {
   await requireAdmin();
   const ids = [...new Set(noteIds.filter((id) => typeof id === "string" && id))];
   const result: Record<string, NoteViewEntry[]> = {};
   if (ids.length === 0) return result;
-  const db = createDb();
-  for (let start = 0; start < ids.length; start += NOTE_VIEW_READ_CHUNK) {
-    const rows = await db
-      .select({ noteId: noteViews.noteId, studentId: noteViews.studentId, lastViewedAt: noteViews.lastViewedAt })
-      .from(noteViews)
-      .where(inArray(noteViews.noteId, ids.slice(start, start + NOTE_VIEW_READ_CHUNK)));
-    for (const row of rows) (result[row.noteId] ??= []).push({ studentId: row.studentId, lastViewedAt: row.lastViewedAt });
+  const rows = await createDb().all<{ noteId: string; studentId: string; lastViewedAt: number }>(sql`
+    SELECT view.note_id AS noteId, view.student_id AS studentId, view.last_viewed_at AS lastViewedAt
+    FROM note_views AS view
+    JOIN private_notes AS note ON note.id = view.note_id
+    WHERE view.note_id IN (SELECT value FROM json_each(${JSON.stringify(ids)}))
+      AND (
+        (note.group_id IS NULL AND view.student_id = note.student_id)
+        OR (note.group_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM lesson_group_members AS member
+          WHERE member.group_id = note.group_id AND member.student_id = view.student_id
+        ))
+      )
+    ORDER BY view.last_viewed_at DESC, view.student_id
+  `);
+  for (const row of rows) {
+    (result[row.noteId] ??= []).push({ studentId: row.studentId, lastViewedAt: new Date(row.lastViewedAt * 1000) });
   }
-  for (const entries of Object.values(result)) entries.sort((a, b) => b.lastViewedAt.getTime() - a.lastViewedAt.getTime());
   return result;
 }

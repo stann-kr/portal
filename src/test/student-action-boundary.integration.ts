@@ -641,6 +641,10 @@ test("노트 열람은 볼 수 있는 학생이 열 때만 마지막 시각으�
   const views = await noteViewActions.getNoteViews(["note-s1", "note-group", "note-s2"]);
   assert.deepEqual(Object.keys(views).sort(), ["note-group", "note-s1"], "기록이 없는 노트는 빠진다");
   assert.deepEqual(views["note-group"].map((view) => view.studentId), ["student-2", "student-1"], "최근에 연 학생이 먼저 온다");
+  assert.ok(views["note-s1"][0].lastViewedAt instanceof Date && views["note-s1"][0].lastViewedAt.getTime() === older.getTime());
+  // 그룹에서 빠진 학생의 예전 기록은 보이지 않는다.
+  await db.delete(portalSchema.lessonGroupMembers).where(eq(portalSchema.lessonGroupMembers.studentId, "student-2"));
+  assert.deepEqual((await noteViewActions.getNoteViews(["note-group"]))["note-group"].map((view) => view.studentId), ["student-1"]);
 });
 
 test("과제 글 계정 임시 저장은 본인 학생만 쓰고 version으로 덮어쓰기를 막으며, 제출하면 지워진다", { concurrency: false }, async (context) => {

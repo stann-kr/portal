@@ -74,11 +74,10 @@ export function NoteDocEditor({
             renderExtraProperties: studentViews && studentViews.length > 0
               ? () => (
                   <NoteProperty icon={Eye} label="학생 열람">
-                    <span className="min-w-0 truncate" data-testid="note-student-views">
-                      {studentViews.map((view, index) => (
-                        <span key={view.id}>
-                          {index > 0 ? " · " : null}
-                          {view.name} <span className={view.viewed ? undefined : "text-muted-foreground"}>{view.viewed ?? "아직 안 봄"}</span>
+                    <span className="flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 py-1" data-testid="note-student-views">
+                      {studentViews.map((view) => (
+                        <span key={view.id} className="whitespace-nowrap">
+                          {view.name} · <span className={view.viewed ? undefined : "text-muted-foreground"}>{view.viewed ?? "아직 안 봄"}</span>
                         </span>
                       ))}
                     </span>
