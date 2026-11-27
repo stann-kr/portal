@@ -5,14 +5,16 @@
  */
 "use server";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, lt } from "drizzle-orm";
 import { createDb } from "@/db/client";
-import { privateNotes } from "@/db/schema";
+import { lessons, privateNotes } from "@/db/schema";
+import { listActiveStudentProfiles } from "@/lib/active-profile";
 import { requireAdmin, requireStudentTarget } from "@/lib/auth-guard";
-import { dayNumberFromKey } from "@/lib/assignment-recurrence";
+import { dayNumberFromKey, kstTodayKey } from "@/lib/assignment-recurrence";
 import {
   INSTRUCTOR_MEMO_MAX_HTML_LENGTH,
   listDatedInstructorMemos,
+  listDatedInstructorMemosForStudents,
   listInstructorMemoRevisions,
   readInstructorMemo,
   saveInstructorMemo,
@@ -21,6 +23,7 @@ import {
 } from "@/lib/instructor-memo";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { sanitizeHtml } from "@/lib/sanitize-html";
+import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 
 /** 클라이언트가 고르는 메모 대상. 노트 메모의 학생은 서버가 노트에서 정한다. */
 export type InstructorMemoScope =
@@ -149,4 +152,95 @@ export async function getDatedInstructorMemos(studentId: string): Promise<DatedI
   await requireStudentTarget(studentId);
   const memos = await listDatedInstructorMemos(createDb(), studentId);
   return memos.map((memo) => ({ date: memo.memoDate, contentHtml: memo.contentHtml, updatedAt: memo.updatedAt }));
+}
+
+export type AdminMemoBoardStudent = {
+  id: string;
+  label: string;
+  /** 고른 날짜의 레슨 시작(첫 레슨). 없으면 null. */
+  lessonAt: Date | null;
+  /** 고른 날짜에 메모가 있는지. */
+  hasMemo: boolean;
+};
+
+export type AdminMemoBoardEntry = DatedInstructorMemoItem & { studentId: string };
+
+export type AdminMemoBoard = {
+  date: string;
+  today: string;
+  /** 그날 레슨 학생(시간 순) 먼저, 나머지는 이름 순. */
+  students: AdminMemoBoardStudent[];
+  selectedStudentId: string | null;
+  /** 고른 학생의 그 날짜 메모. 학생을 고르지 않았으면 null. */
+  memo: InstructorMemoSnapshot | null;
+  /** 그 날짜에 남긴 모든 학생의 메모. */
+  dayEntries: AdminMemoBoardEntry[];
+  /** 학생 상관없이 최근 날짜부터. */
+  recentEntries: AdminMemoBoardEntry[];
+};
+
+const KST_DAY_MS = 24 * 60 * 60 * 1000;
+const RECENT_MEMO_LIMIT = 30;
+
+/**
+ * 관리자 "메모" 화면(사이드바, 2026-11-27 사용자 요청 "날짜별 학생 메모 접근이 너무 깊다").
+ * 날짜를 먼저 고르고 그날 레슨 학생부터 보인다. 학생은 수강 중인 학생 목록에 있을 때만 고른다.
+ * 레슨은 DB(lessons)만 본다. 바깥 캘린더 구독은 느릴 수 있어 이 화면을 막지 않는다.
+ */
+export async function getAdminMemoBoard(
+  input: { date?: string | null; studentId?: string | null; now: Date },
+): Promise<AdminMemoBoard> {
+  await requireAdmin();
+  const db = createDb();
+  const today = kstTodayKey(input.now);
+  const date = input.date && dayNumberFromKey(input.date) !== null ? input.date : today;
+  const profiles = await listActiveStudentProfiles(db);
+  const ids = profiles.map((profile) => profile.id);
+  const dayStart = new Date(Date.parse(`${date}T00:00:00+09:00`));
+  const dayEnd = new Date(dayStart.getTime() + KST_DAY_MS);
+  const [lessonRows, dayMemos, recentMemos] = await Promise.all([
+    ids.length === 0
+      ? Promise.resolve([])
+      : db
+        .select({ studentId: lessons.studentId, scheduledAt: lessons.scheduledAt })
+        .from(lessons)
+        .where(and(gte(lessons.scheduledAt, dayStart), lt(lessons.scheduledAt, dayEnd)))
+        .orderBy(asc(lessons.scheduledAt)),
+    listDatedInstructorMemosForStudents(db, ids, { date }),
+    listDatedInstructorMemosForStudents(db, ids, { limit: RECENT_MEMO_LIMIT }),
+  ]);
+  const lessonAt = new Map<string, Date>();
+  for (const row of lessonRows) if (!lessonAt.has(row.studentId)) lessonAt.set(row.studentId, row.scheduledAt);
+  const memoStudents = new Set(dayMemos.map((memo) => memo.studentId));
+  const students = profiles
+    .map((profile) => ({
+      id: profile.id,
+      label: getUnifiedItemSpaceLabel(profile),
+      lessonAt: lessonAt.get(profile.id) ?? null,
+      hasMemo: memoStudents.has(profile.id),
+    }))
+    .sort((a, b) => {
+      if (a.lessonAt && b.lessonAt) return a.lessonAt.getTime() - b.lessonAt.getTime();
+      if (a.lessonAt || b.lessonAt) return a.lessonAt ? -1 : 1;
+      return a.label.localeCompare(b.label, "ko");
+    });
+  const selectedStudentId = input.studentId && ids.includes(input.studentId) ? input.studentId : null;
+  const memo = selectedStudentId
+    ? toSnapshot(await readInstructorMemo(db, { studentId: selectedStudentId, noteId: null, memoDate: date }))
+    : null;
+  const entry = (row: { studentId: string; memoDate: string; contentHtml: string; updatedAt: Date }): AdminMemoBoardEntry => ({
+    studentId: row.studentId,
+    date: row.memoDate,
+    contentHtml: row.contentHtml,
+    updatedAt: row.updatedAt,
+  });
+  return {
+    date,
+    today,
+    students,
+    selectedStudentId,
+    memo,
+    dayEntries: dayMemos.map(entry),
+    recentEntries: recentMemos.map(entry),
+  };
 }

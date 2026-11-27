@@ -302,6 +302,49 @@ test("날짜별 메모는 노트 없이 학생·날짜마다 하나이고, 학�
   assert.equal(rows.find((row) => row.memoDate === "2026-11-27")?.contentHtml, "<p>8마디 전환 연습</p>");
 });
 
+test("관리자 메모 화면은 그날 레슨 학생을 먼저, 그날·최근 메모를 학생 상관없이 모으고 관리자만 연다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-a");
+  await seedProfile(db, "student-b");
+  await seedProfile(db, "student-c");
+  await db.insert(lessons).values([
+    // 11.27 KST 하루 안: student-c 10:00, student-b 23:30. 전날 23:59(KST)는 빼야 한다.
+    { id: "lesson-c", studentId: "student-c", scheduledAt: new Date("2026-11-27T01:00:00.000Z") },
+    { id: "lesson-b", studentId: "student-b", scheduledAt: new Date("2026-11-27T14:30:00.000Z") },
+    { id: "lesson-a-prev", studentId: "student-a", scheduledAt: new Date("2026-11-26T14:59:00.000Z") },
+  ]);
+  const day = (date: string, studentId: string) => ({ kind: "date" as const, studentId, date });
+  assert.equal((await memoActions.saveInstructorMemoAction(day("2026-11-27", "student-b"), { contentHtml: "<p>오늘 진도</p>", baseVersion: 0 })).ok, true);
+  assert.equal((await memoActions.saveInstructorMemoAction(day("2026-11-24", "student-a"), { contentHtml: "<p>지난주</p>", baseVersion: 0 })).ok, true);
+  assert.equal((await memoActions.saveInstructorMemoAction({ kind: "student", studentId: "student-a" }, { contentHtml: "<p>장기</p>", baseVersion: 0 })).ok, true);
+  const now = new Date("2026-11-27T03:00:00.000Z");
+
+  const board = await memoActions.getAdminMemoBoard({ date: null, studentId: "student-b", now });
+  assert.equal(board.date, "2026-11-27", "날짜가 없으면 오늘(KST)");
+  assert.deepEqual(board.students.map((student) => [student.id, Boolean(student.lessonAt), student.hasMemo]), [
+    ["student-c", true, false],
+    ["student-b", true, true],
+    ["student-a", false, false],
+  ], "그날 레슨 학생이 시간 순으로 먼저, 나머지는 이름 순");
+  assert.equal(board.selectedStudentId, "student-b");
+  assert.equal(board.memo?.contentHtml, "<p>오늘 진도</p>");
+  assert.deepEqual(board.dayEntries.map((entry) => entry.studentId), ["student-b"]);
+  assert.deepEqual(board.recentEntries.map((entry) => [entry.date, entry.studentId]), [["2026-11-27", "student-b"], ["2026-11-24", "student-a"]], "학생 메모는 섞지 않는다");
+
+  // 잘못된 날짜는 오늘로, 학생이 아닌 대상은 고르지 않는다.
+  const fallback = await memoActions.getAdminMemoBoard({ date: "2026-02-30", studentId: "admin-1", now });
+  assert.equal(fallback.date, "2026-11-27");
+  assert.equal(fallback.selectedStudentId, null);
+  assert.equal(fallback.memo, null);
+  const other = await memoActions.getAdminMemoBoard({ date: "2026-11-24", studentId: "student-a", now });
+  assert.equal(other.memo?.contentHtml, "<p>지난주</p>");
+  assert.equal(other.students.every((student) => student.lessonAt === null), true);
+
+  activeSession = createSession("student-a", "student");
+  await assert.rejects(memoActions.getAdminMemoBoard({ date: null, studentId: "student-a", now }), /Admin only|Unauthorized/);
+});
+
 test("로그인 이메일은 공백·대소문자 차이를 허용하되 모호한 계정은 고르지 않는다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("admin-1", "admin"));
   await db.insert(profiles).values([
