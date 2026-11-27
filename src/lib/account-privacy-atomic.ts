@@ -721,6 +721,8 @@ function accountDeletionStatements(input: {
     },
     // 관리자 수업 메모는 FK cascade에 기대지 않고 학생 데이터와 함께 명시적으로 지운다.
     { query: "DELETE FROM instructor_memos WHERE student_id = ?", params: [actorId] },
+    // 이 학생이 노트를 연 기록(0044). 남는 그룹 노트에 붙은 기록도 학생 데이터와 함께 지운다.
+    { query: "DELETE FROM note_views WHERE student_id = ?", params: [actorId] },
     {
       query: "DELETE FROM private_notes WHERE student_id = ? OR author_id = ?",
       params: [actorId, actorId],

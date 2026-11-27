@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { Eye } from "lucide-react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import type { UpdateNoteState } from "@/lib/actions/privateNotes";
 import { DeleteNoteButton } from "./DeleteNoteButton";
-import { NoteBreadcrumb, NoteDocumentStrip, NoteGroupShareLine, NoteHistoryLink, type NoteParent } from "./NoteDocumentChrome";
+import { NoteBreadcrumb, NoteDocumentStrip, NoteGroupShareLine, NoteHistoryLink, NoteProperty, type NoteParent } from "./NoteDocumentChrome";
 import { NoteEditorForm } from "./NoteEditorForm";
 import { NoteLessonFrame, type NoteInstructorTools } from "./NoteLessonFrame";
 import { formatNoteUpdated } from "./note-display";
@@ -27,6 +28,7 @@ export function NoteDocEditor({
   instructor,
   groupShareLine,
   canTrash,
+  studentViews,
 }: {
   note: { id: string; title: string; contentHtml: string; noteDate: Date | null; version: number };
   actorId: string;
@@ -46,6 +48,11 @@ export function NoteDocEditor({
    * 더 보기 메뉴(지금은 휴지통 이동 하나뿐)를 그리지 않는다(2026-11-23).
    */
   canTrash: boolean;
+  /**
+   * 학생 열람(관리자 화면에서만 서버가 넘긴다, 0044): 개인 노트는 그 학생, 그룹 노트는 멤버마다 이름과 마지막으로 연 때.
+   * `viewed`가 null이면 아직 열지 않았다.
+   */
+  studentViews?: { id: string; name: string; viewed: string | null }[] | null;
 }) {
   // 자동 저장은 route를 다시 렌더하지 않으므로 "수정" 줄은 저장 응답의 시각으로 여기서 맞춘다.
   const [updatedLabel, setUpdatedLabel] = useState(initialUpdatedLabel);
@@ -64,6 +71,20 @@ export function NoteDocEditor({
             authorName,
             updatedLabel,
             header: groupShareLine ? <NoteGroupShareLine>{groupShareLine}</NoteGroupShareLine> : null,
+            renderExtraProperties: studentViews && studentViews.length > 0
+              ? () => (
+                  <NoteProperty icon={Eye} label="학생 열람">
+                    <span className="min-w-0 truncate" data-testid="note-student-views">
+                      {studentViews.map((view, index) => (
+                        <span key={view.id}>
+                          {index > 0 ? " · " : null}
+                          {view.name} <span className={view.viewed ? undefined : "text-muted-foreground"}>{view.viewed ?? "아직 안 봄"}</span>
+                        </span>
+                      ))}
+                    </span>
+                  </NoteProperty>
+                )
+              : undefined,
             renderBars: ({ status, title, version }) => (
               <>
                 <MobileTopBar

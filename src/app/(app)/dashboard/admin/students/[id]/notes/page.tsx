@@ -19,6 +19,8 @@ import { toNotesDatabaseRows } from "@/lib/notes-database";
 import { getNoteSearchQuery, searchPrivateNotes } from "@/components/notes/NoteSearch";
 import { buildNotesLessonsTimelineHref } from "@/lib/calendar-section-contract";
 import { getRequestNow } from "@/lib/request-time";
+import { getNoteViews } from "@/lib/actions/noteViews";
+import { formatNoteViewed } from "@/components/notes/note-display";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 import { buildArchivedStudentHref, isArchivedStudent } from "@/lib/archived-student-records";
 
@@ -61,6 +63,13 @@ export default async function AdminStudentNotesPage({
     ...(groupNotes?.notes ?? []).map((note) => ({ ...note, groupName: groupNotes!.group.name })),
   ];
   const matchingNotes = searchPrivateNotes(notes, query);
+  // 학생 열람(관리자만, 0044): 이 학생이 노트를 마지막으로 연 때. 그룹 노트도 이 학생 기준.
+  const now = getRequestNow();
+  const views = await getNoteViews(matchingNotes.map((note) => note.id));
+  const rows = toNotesDatabaseRows(matchingNotes).map((row) => {
+    const view = views[row.id]?.find((entry) => entry.studentId === studentId);
+    return { ...row, viewedLabel: view ? formatNoteViewed(view.lastViewedAt, now) : null };
+  });
   const name = student.displayName?.trim() || student.email;
   const timelineHref = buildNotesLessonsTimelineHref({ role: "admin", studentId });
   const trashHref = `/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`;
@@ -95,7 +104,7 @@ export default async function AdminStudentNotesPage({
             </Link>
           </div>
           <NotesDatabase
-            rows={toNotesDatabaseRows(matchingNotes)}
+            rows={rows}
             ownerId={session.user.id}
             returnTo={returnTo}
             returnFallback={listPath}
@@ -104,7 +113,7 @@ export default async function AdminStudentNotesPage({
             query={query}
             totalCount={notes.length}
             scopeFilter={groupNotes !== null}
-            now={getRequestNow()}
+            now={now}
             emptyMessage={query ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요." : "아직 이 학생 스페이스에 작성된 노트가 없습니다."}
           />
   <NotesMobileLinks timelineHref={timelineHref} trashHref={trashHref} />

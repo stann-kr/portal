@@ -2,7 +2,7 @@
  * 노트·변경 이력·휴지통 화면의 표시 문자열(캔버스 Notes·NoteDoc·NoteHistory·NotesTrash 보드).
  * 날짜 계산은 `formatKst`로만 하고, client가 받는 목록 행은 서버가 만든 label을 글자만 바꿔 hydration 차이를 피한다.
  */
-import { formatKst, formatKstShortDate } from "@/lib/kst-format";
+import { formatKst, formatKstShortDate, formatRecordTime } from "@/lib/kst-format";
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
@@ -68,6 +68,13 @@ export function formatNoteUpdated(value: DateValue, now: number): string {
   const time = toTime(value);
   if (time === null) return "—";
   return formatRecentDistance(time, now) ?? formatKstShortDate(time, "—", new Date(now));
+}
+
+/** 학생 열람(관리자만, 0044): 하루 안은 상대 시각("9분 전"), 그 뒤는 날짜와 시각("11.25 22:12"). */
+export function formatNoteViewed(value: DateValue, now: number): string {
+  const time = toTime(value);
+  if (time === null) return "—";
+  return formatRecentDistance(time, now) ?? formatRecordTime(time, now);
 }
 
 /** 노트 문서 "날짜" 속성: "2026년 10월 26일 (월)". */

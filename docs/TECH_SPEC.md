@@ -157,7 +157,7 @@ OpenNext → Cloudflare Worker
 - 공용 가이드: `guide_pages`, `guide_assets`, `qna_guide_anchors`, 학생별 열람 권한 `guide_access`, `guide_access_pages`
 - 캘린더 양방향 동기화: `calendar_connections`, `calendar_mappings`, `calendar_sync_links`, `calendar_remote_series`(예정: `calendar_push_channels`)
 - 콘텐츠: `categories`, `posts`, `post_revisions`, `comments`
-- 개인 학습 기록: `private_notes`, `private_note_revisions`, `calendar_events`
+- 개인 학습 기록: `private_notes`, `private_note_revisions`, `note_views`(학생별 마지막 열람, 0044, 관리자만 읽음), `calendar_events`
 - 관리자 수업 메모: `instructor_memos`(학생별 `note_id`·`memo_date` NULL 하나·노트별 하나·학생 날짜별 하나(`memo_date`, 0043), version), `instructor_memo_revisions`(10분 묶음, 90일·200칸)
 - 문서 연속성: `document_operation_ledger`, `document_tombstones`, `document_batch_abort_guard`, `document_server_drafts`, `document_server_draft_operations`
 - 미디어 수명주기: `media_objects`, `media_deletion_outbox`
@@ -604,6 +604,13 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 디깅 피드백: `src/lib/actions/digging-feedback.ts`. 디깅한 날은 세 표를 `UNION ALL` 후 학생·날짜로 묶고 피드백을 LEFT JOIN한다(학생 id는 `json_each(?)` 하나로 bind). 관리자 화면은 피드백 전인 날을 먼저 담아 200줄 제한에 잘리지 않게 한다. `saveDiggingFeedback`은 `expectedUpdatedAt`이 없으면 `INSERT … ON CONFLICT DO NOTHING`, 있으면 `updated_at` 비교 UPDATE(같은 초에도 커지게)이고, 새로 남길 때만 `diggingFeedbackAdded` 푸시(`/dashboard/student/digging#digging-day-<날짜>`)를 보낸다. 화면은 `DiggingFeedbackPanel`(관리자 학생 상세 디깅 탭, `useFormDraft` 기기 초안·이탈 보호)과 `DiggingFeedbackList`(학생 디깅 화면). 계정·학생 삭제는 `digging_feedbacks`를 지운다.
 - 메뉴: `ADMIN_DIGGING_HREF`(`/dashboard/admin/digging`)를 과제 다음에 두고, 학생 필터 기억 cookie `portal-admin-digging-student`를 더했다.
 - 감사 보완: `updateDiggingColumn`(이름·선택지, 유형 고정)·`moveDiggingColumn`(본인 컬럼을 0부터 다시 매겨 한 batch), `updateComment`(작성자 본인, 본 HTML과 같을 때만, `updated_at`), `updateFeedback`이 `updated_at`을 남겨 학생 타임라인에 "수정됨", 수강 종료 학생 보기 `digging` 탭(`readDigging`, 컬럼 seed 없음), 전체 노트의 학생 휴지통 링크.
+
+## 노트 열람(2026-11-27, FR-048)
+
+- 데이터(`0044_note_views`): `note_views`(`note_id`·`student_id` 복합 기본키, `last_viewed_at`), 두 FK 모두 `ON DELETE CASCADE`, index `note_views_student_idx`. 노트 영구 삭제는 cascade로, 계정 삭제(`account-privacy-atomic.ts`)는 명시적 `DELETE FROM note_views WHERE student_id = ?`로 지운다. 학생 삭제 조건(`STUDENT_DELETION_RECORD_COLUMNS`)에 기록 칸으로 넣었다. `db:check`(`scripts/migration-check/note-views.mjs`)가 채워진 0043 DB에서 upgrade·기존 행 보존·FK·index 사용·마지막 시각 갱신·노트 삭제 cascade를 검사한다.
+- 기록(`recordNoteView`, `src/lib/actions/noteViews.ts`): 학생 세션만, `INSERT … SELECT FROM private_notes WHERE id = ? AND deleted_at IS NULL AND (개인: group_id IS NULL AND student_id = 학생 | 그룹: 지금 lesson_group_members 멤버) ON CONFLICT DO UPDATE … WHERE last_viewed_at <= 새 시각 - 60` 한 문장이다. 노트 문서 페이지(편집·읽기 전용 둘 다)는 학생 세션에서 `NoteViewRecorder`(그린 뒤 effect, prefetch로는 남지 않음)를, 캘린더 패널 `UnifiedNoteDetail`은 노트를 불러온 뒤 학생 viewer일 때 같은 action을 부른다. 실패는 무시한다.
+- 조회: `getNoteViews(noteIds)`(관리자 전용, 90개씩 `inArray`)가 노트마다 학생별 마지막 열람을 최근 순으로 준다. 노트 문서는 수업 도구의 멤버(개인 노트는 그 학생, 그룹 노트는 지금 멤버)마다 `NoteDocEditor.studentViews` → `renderExtraProperties`의 "학생 열람" 속성으로, 전체 노트 표는 `AllNotesTableRow.viewedLabel`(가장 최근), 학생 상세 노트는 `NotesDatabaseRow.viewedLabel`(그 학생, 관리자 페이지만 채우고 학생 화면은 undefined라 칸이 없다)로 보인다. 글자는 `formatNoteViewed`(하루 안 상대 시각, 그 뒤 `formatRecordTime`).
+- 검증: `src/test/student-action-boundary.integration.ts`(기록 조건·1분 갱신·관리자 전용, 실제 D1), `src/test/document-form-shortcut.integration.tsx`(패널 기록 호출), `src/lib/account-privacy-atomic.test.ts`(계정 삭제), `scripts/migration-check/note-views.mjs`.
 
 ## 게시물 읽음(2026-11-23)
 

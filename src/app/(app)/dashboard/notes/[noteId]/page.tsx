@@ -3,6 +3,8 @@ import { AlertTriangle, CalendarDays, Clock3, UserRound } from "lucide-react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { findStudentTarget, getActiveAuthSession } from "@/lib/auth-guard";
 import { getInstructorMemo } from "@/lib/actions/instructorMemos";
+import { getNoteViews } from "@/lib/actions/noteViews";
+import { NoteViewRecorder } from "@/components/notes/NoteViewRecorder";
 import {
   getPrivateNoteIncludingTrash,
   updatePrivateNote,
@@ -25,7 +27,7 @@ import {
   resolveNoteParent,
 } from "@/components/notes/NoteDocumentChrome";
 import { NoteTrashActions } from "@/components/notes/NoteTrashActions";
-import { formatNoteLongDate, formatNoteUpdated, formatTrashDeadline, formatTrashTime } from "@/components/notes/note-display";
+import { formatNoteLongDate, formatNoteUpdated, formatNoteViewed, formatTrashDeadline, formatTrashTime } from "@/components/notes/note-display";
 import { PRIVATE_NOTE_TRASH_RETENTION_SECONDS } from "@/lib/private-note-continuity";
 import { getRequestNow } from "@/lib/request-time";
 import { missingWhenAccessDenied } from "@/lib/access-denied-as-missing";
@@ -134,7 +136,15 @@ export default async function NotePage({
   if (!note.deletedAt && canEdit) {
     // 수업 도구·비밀 메모는 관리자 화면에서만 읽어 넘긴다(학생 화면에는 내용이 실리지 않는다).
     const instructor = session.user.role === "admin" ? await loadNoteInstructorTools(note) : undefined;
+    // 학생 열람(관리자만, 0044): 수업 도구의 학생(개인 노트의 학생, 그룹 노트의 지금 멤버)마다 마지막으로 연 때.
+    const views = instructor ? (await getNoteViews([note.id]))[note.id] ?? [] : [];
+    const studentViews = instructor?.members.map((member) => {
+      const view = views.find((entry) => entry.studentId === member.studentId);
+      return { id: member.studentId, name: member.name, viewed: view ? formatNoteViewed(view.lastViewedAt, now) : null };
+    }) ?? null;
     return (
+      <>
+      {session.user.role === "student" ? <NoteViewRecorder noteId={note.id} /> : null}
       <NoteDocEditor
         note={{
           id: note.id,
@@ -153,7 +163,9 @@ export default async function NotePage({
         instructor={instructor}
         groupShareLine={groupShareLine}
         canTrash={canManageLifecycle}
+        studentViews={studentViews}
       />
+      </>
     );
   }
 
@@ -161,6 +173,7 @@ export default async function NotePage({
   if (!note.deletedAt) {
     return (
       <>
+        {session.user.role === "student" ? <NoteViewRecorder noteId={note.id} /> : null}
         <MobileTopBar
           hideTitle
           back={{ href: parent.href, label: parent.backLabel }}

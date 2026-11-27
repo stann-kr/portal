@@ -183,6 +183,13 @@ mock.module("@/lib/actions/students", { namedExports: {
   getStudentOptions: async () => [],
 } });
 
+// 학생이 패널에서 노트를 열면 열람(관리자만 보기, 0044)을 남긴다.
+const recordedNoteViews: string[] = [];
+mock.module("@/lib/actions/noteViews", { namedExports: {
+  recordNoteView: async (noteId: string) => { recordedNoteViews.push(noteId); },
+  getNoteViews: async () => ({}),
+} });
+
 mock.module("@/lib/actions/privateNotes", { namedExports: {
   restorePrivateNoteRevision: (...args: Parameters<typeof restoreNote>) => restoreNote(...args),
   trashPrivateNote: (...args: Parameters<typeof changeNoteLifecycle>) => changeNoteLifecycle(...args),
@@ -1237,6 +1244,7 @@ test("캘린더 패널에서 작성자는 노트를 바로 고치고 저장 결�
   assert.ok(busy.includes(true), "저장하는 동안 패널을 닫지 못하게 알린다");
   assert.equal(busy.at(-1), false);
   assert.match(harness.container.textContent ?? "", /전체 화면으로 열기/u);
+  assert.ok(recordedNoteViews.includes("panel-note"), "학생이 패널에서 노트를 열면 열람을 남긴다");
 });
 
 // 2026-11-23 사용자 결정: 이전에는 Stann이 만든 노트가 학생 패널에서 읽기 전용이었다. 이제 노트 주인 학생은 바로 고친다.

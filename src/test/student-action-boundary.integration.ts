@@ -52,6 +52,7 @@ let categoryActions: typeof import("@/lib/actions/categories");
 let passwordActions: typeof import("@/lib/actions/password");
 let memoActions: typeof import("@/lib/actions/instructorMemos");
 let assignmentReviewActions: typeof import("@/lib/actions/assignment-review");
+let noteViewActions: typeof import("@/lib/actions/noteViews");
 
 function createSession(id: string, role: "admin" | "student"): AuthSession {
   return {
@@ -111,7 +112,7 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions, assignmentTaskActions, memoActions, assignmentReviewActions, postReadActions, assignmentDraftActions] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions, assignmentTaskActions, memoActions, assignmentReviewActions, postReadActions, assignmentDraftActions, noteViewActions] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
@@ -130,6 +131,7 @@ before(async () => {
       import("@/lib/actions/assignment-review"),
       import("@/lib/actions/postReads"),
       import("@/lib/actions/assignmentDrafts"),
+      import("@/lib/actions/noteViews"),
     ]);
 });
 
@@ -581,6 +583,64 @@ test("게시물 읽음은 학생이 남의 글을 처음 연 때만 남고, 읽�
   assert.equal(adminPage.posts.find((post) => post.id === "post-by-2")?.readCount, 1);
   const adminSearch = await postActions.searchCommunityPosts({ boardType: "GENERAL", category: "general", query: "2의" });
   assert.equal(adminSearch.posts.find((post) => post.id === "post-by-2")?.readCount, 1);
+});
+
+test("노트 열람은 볼 수 있는 학생이 열 때만 마지막 시각으로 남고(1분 안 재열람은 그대로), 관리자만 읽는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "student-3");
+  await db.insert(portalSchema.lessonGroups).values({ id: "group-a", name: "A반" });
+  await db.insert(portalSchema.lessonGroupMembers).values([
+    { studentId: "student-1", groupId: "group-a" },
+    { studentId: "student-2", groupId: "group-a" },
+  ]);
+  await db.insert(privateNotes).values([
+    { id: "note-s1", studentId: "student-1", authorId: "admin-1", title: "1회차", contentHtml: "<p>x</p>" },
+    { id: "note-s2", studentId: "student-2", authorId: "admin-1", title: "남의 노트", contentHtml: "<p>x</p>" },
+    { id: "note-group", studentId: "student-1", authorId: "admin-1", groupId: "group-a", title: "그룹", contentHtml: "<p>x</p>" },
+    { id: "note-trashed", studentId: "student-1", authorId: "admin-1", title: "휴지통", contentHtml: "<p>x</p>", deletedAt: new Date(), deletedById: "admin-1" },
+  ]);
+  const readRows = async () => (await db.select().from(portalSchema.noteViews))
+    .map((row) => `${row.noteId}:${row.studentId}`)
+    .sort();
+
+  // 자기 노트·멤버인 그룹 노트만 남는다. 남의 노트·휴지통·없는 노트는 남지 않는다.
+  await noteViewActions.recordNoteView("note-s1");
+  await noteViewActions.recordNoteView("note-group");
+  await noteViewActions.recordNoteView("note-s2");
+  await noteViewActions.recordNoteView("note-trashed");
+  await noteViewActions.recordNoteView("missing-note");
+  activeSession = createSession("student-2", "student");
+  await noteViewActions.recordNoteView("note-group");
+  activeSession = createSession("student-3", "student");
+  await noteViewActions.recordNoteView("note-group");
+  activeSession = createSession("admin-1", "admin");
+  await noteViewActions.recordNoteView("note-s1");
+  assert.deepEqual(await readRows(), ["note-group:student-1", "note-group:student-2", "note-s1:student-1"], "멤버가 아닌 학생과 관리자가 연 것은 남기지 않는다");
+
+  // 1분 안에 다시 열면 그대로, 그보다 지나면 마지막 시각으로 바뀐다.
+  const readS1 = async () => (await db.select().from(portalSchema.noteViews).where(eq(portalSchema.noteViews.noteId, "note-s1")))[0]?.lastViewedAt.getTime();
+  const old = new Date(Math.floor(Date.now() / 1000) * 1000 - 30_000);
+  await db.update(portalSchema.noteViews).set({ lastViewedAt: old }).where(eq(portalSchema.noteViews.noteId, "note-s1"));
+  activeSession = createSession("student-1", "student");
+  await noteViewActions.recordNoteView("note-s1");
+  assert.equal(await readS1(), old.getTime(), "1분 안 재열람은 시각을 바꾸지 않는다");
+  const older = new Date(old.getTime() - 120_000);
+  await db.update(portalSchema.noteViews).set({ lastViewedAt: older }).where(eq(portalSchema.noteViews.noteId, "note-s1"));
+  await noteViewActions.recordNoteView("note-s1");
+  assert.ok(((await readS1()) ?? 0) > older.getTime() + 60_000, "1분이 지나면 마지막 시각으로 바뀐다");
+
+  // 학생은 열람 기록을 읽을 수 없다.
+  await assert.rejects(noteViewActions.getNoteViews(["note-s1"]), /Unauthorized|Forbidden|admin/iu);
+
+  activeSession = createSession("admin-1", "admin");
+  await db.update(portalSchema.noteViews).set({ lastViewedAt: older })
+    .where(inArray(portalSchema.noteViews.studentId, ["student-1"]));
+  const views = await noteViewActions.getNoteViews(["note-s1", "note-group", "note-s2"]);
+  assert.deepEqual(Object.keys(views).sort(), ["note-group", "note-s1"], "기록이 없는 노트는 빠진다");
+  assert.deepEqual(views["note-group"].map((view) => view.studentId), ["student-2", "student-1"], "최근에 연 학생이 먼저 온다");
 });
 
 test("과제 글 계정 임시 저장은 본인 학생만 쓰고 version으로 덮어쓰기를 막으며, 제출하면 지워진다", { concurrency: false }, async (context) => {

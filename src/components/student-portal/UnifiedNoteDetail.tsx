@@ -12,6 +12,7 @@ import { LockKeyhole, Maximize2 } from "lucide-react";
 import { NoteEditorForm, type SavedNote } from "@/components/notes/NoteEditorForm";
 import { Button } from "@/components/ui/button";
 import { getPrivateNote, updatePrivateNote, type UpdateNoteState } from "@/lib/actions/privateNotes";
+import { recordNoteView } from "@/lib/actions/noteViews";
 import { createNotePreview } from "@/lib/unified-item-normalization";
 import { toKstDateInputValue } from "@/lib/date-input";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
@@ -161,6 +162,13 @@ export function UnifiedNoteDetail({
       active = false;
     };
   }, [noteId, attempt]);
+
+  // 학생이 패널에서 노트를 열어도 "학생 열람"(관리자만 보기, 0044)을 남긴다. 관리자는 서버가 남기지 않는다.
+  const loadedNoteId = body.status === "ready" ? body.note.id : null;
+  useEffect(() => {
+    if (!loadedNoteId || viewer?.role === "admin") return;
+    recordNoteView(loadedNoteId).catch(() => undefined);
+  }, [loadedNoteId, viewer?.role]);
 
   const fullPageHref = `/dashboard/notes/${encodeURIComponent(noteId)}?returnTo=${encodeURIComponent(returnTo)}`;
   // 쓰기 권한은 서버가 노트 규칙(개인: 그 학생 본인·관리자 — Stann이 만든 노트도(2026-11-23), 그룹: 관리자·지금 멤버)으로 정한 값을 따른다.
