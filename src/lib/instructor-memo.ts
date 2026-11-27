@@ -3,7 +3,7 @@
  * @description 관리자 전용 수업 메모의 저장·이력 규칙. 학생과 함께 쓰는 노트와 다른 표에 두고,
  * 한 사람(Stann)이 쓰므로 공동 편집 대신 version 비교로 다른 기기의 덮어쓰기만 막는다.
  */
-import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import { instructorMemoRevisions, instructorMemos } from "@/db/schema";
 
@@ -237,4 +237,36 @@ export async function listDatedInstructorMemos(
     .orderBy(desc(instructorMemos.memoDate))
     .limit(limit);
   return rows.flatMap((row) => (row.memoDate ? [{ memoDate: row.memoDate, contentHtml: row.contentHtml, updatedAt: row.updatedAt }] : []));
+}
+
+export type StudentDatedInstructorMemo = DatedInstructorMemo & { studentId: string };
+
+/**
+ * 여러 학생의 날짜 메모(관리자 "메모" 화면). `date`가 있으면 그 날짜 메모만, 없으면 최근 날짜부터 `limit`개.
+ * 비워 저장한 날짜는 뺀다. 학생 목록은 호출하는 쪽이 수강 중인 학생으로 정한다.
+ */
+export async function listDatedInstructorMemosForStudents(
+  db: DrizzleDb,
+  studentIds: readonly string[],
+  options: { date?: string; limit?: number } = {},
+): Promise<StudentDatedInstructorMemo[]> {
+  if (studentIds.length === 0) return [];
+  const rows = await db
+    .select({
+      studentId: instructorMemos.studentId,
+      memoDate: instructorMemos.memoDate,
+      contentHtml: instructorMemos.contentHtml,
+      updatedAt: instructorMemos.updatedAt,
+    })
+    .from(instructorMemos)
+    .where(and(
+      inArray(instructorMemos.studentId, [...studentIds]),
+      options.date ? eq(instructorMemos.memoDate, options.date) : isNotNull(instructorMemos.memoDate),
+      sql`${instructorMemos.contentHtml} <> ''`,
+    ))
+    .orderBy(desc(instructorMemos.memoDate), desc(instructorMemos.updatedAt))
+    .limit(options.limit ?? 200);
+  return rows.flatMap((row) => (row.memoDate
+    ? [{ studentId: row.studentId, memoDate: row.memoDate, contentHtml: row.contentHtml, updatedAt: row.updatedAt }]
+    : []));
 }

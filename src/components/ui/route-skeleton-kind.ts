@@ -39,6 +39,7 @@ const ROUTE_SKELETON_RULES: ReadonlyArray<[pattern: RegExp, kind: RouteSkeletonK
   [new RegExp(`^/dashboard/admin/students/${ID}(?:/.*)?$`, "u"), "student-detail"],
   [/^\/dashboard\/admin\/(?:operations|calendar-sync)$/u, "form"],
   [/^\/dashboard\/admin\/categories$/u, "form-wide"],
+  [/^\/dashboard\/admin\/memos$/u, "record-list"],
   [/^\/dashboard\/admin(?:\/.*)?$/u, "work-queue"],
   [new RegExp(`^/dashboard/student/assignments/(?:analysis/)?${ID}$`, "u"), "assignment"],
   [/^\/dashboard\/student\/digging$/u, "board"],

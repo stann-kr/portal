@@ -3,6 +3,7 @@ import {
   BookOpenText,
   CalendarDays,
   CircleHelp,
+  NotebookPen,
   FilePlay,
   FileText,
   House,
@@ -29,6 +30,18 @@ export const ADMIN_ASSIGNMENTS_HREF = "/dashboard/admin/assignments";
 
 /** 관리자 디깅(학생들이 디깅한 날과 피드백 여부, 학생 필터). 사이드바 "디깅"이 연다(캔버스 FlowGaps1123 ②). */
 export const ADMIN_DIGGING_HREF = "/dashboard/admin/digging";
+
+/** 관리자 메모(노트 없이 학생·날짜마다 남기는 메모, 날짜 먼저 고르기). 사이드바 "메모"와 업무함 레슨 줄 "메모"가 연다(캔버스 MemoNav1127). */
+export const ADMIN_MEMOS_HREF = "/dashboard/admin/memos";
+
+/** 메모 화면 주소. 날짜가 오늘이면 주소에 남기지 않는다(새로고침하면 그날의 오늘로 연다). */
+export function buildAdminMemoHref({ date, studentId, today }: { date?: string; studentId?: string | null; today?: string }): string {
+  const params = new URLSearchParams();
+  if (date && date !== today) params.set("date", date);
+  if (studentId) params.set("student", studentId);
+  const query = params.toString();
+  return query ? `${ADMIN_MEMOS_HREF}?${query}` : ADMIN_MEMOS_HREF;
+}
 
 /** 대상(학생·그룹)을 먼저 고른 뒤 이미 있는 작성 화면을 여는 고르기 화면(캔버스 AdminUx1123 ①). */
 export const ADMIN_NOTE_PICKER_HREF = `${ADMIN_NOTES_HREF}/new`;
@@ -71,6 +84,7 @@ export const APP_NAV_ITEMS: Record<AppRole, readonly AppNavItem[]> = {
     { id: "notes", label: "노트", href: ADMIN_NOTES_HREF, Icon: FileText },
     { id: "assignments", label: "과제", href: ADMIN_ASSIGNMENTS_HREF, Icon: FilePlay },
     { id: "digging", label: "디깅", href: ADMIN_DIGGING_HREF, Icon: Music },
+    { id: "memos", label: "메모", href: ADMIN_MEMOS_HREF, Icon: NotebookPen },
     { id: "guide", label: "가이드", href: GUIDE_HREF, Icon: BookOpenText },
     { id: "qna", label: "Q&A", href: "/dashboard/qna", Icon: CircleHelp },
     { id: "community", label: "커뮤니티", href: "/community", Icon: MessageSquare },
@@ -124,6 +138,7 @@ export function resolveActiveNavItem(role: AppRole, { pathname, searchParams }: 
     if (pathname === ADMIN_ASSIGNMENTS_HREF || pathname.startsWith(`${ADMIN_ASSIGNMENTS_HREF}/`)) return "assignments";
     if (pathname.startsWith("/dashboard/student/assignments")) return "assignments";
     if (pathname === ADMIN_DIGGING_HREF || pathname.startsWith(`${ADMIN_DIGGING_HREF}/`)) return "digging";
+    if (pathname === ADMIN_MEMOS_HREF) return "memos";
     if (pathname.startsWith("/dashboard/admin/students") || pathname.startsWith("/dashboard/notes")) return "students";
     if (
       pathname.startsWith(ADMIN_OPERATIONS_HREF) ||
@@ -222,6 +237,7 @@ export function resolveMobileTopBar(role: AppRole, location: Location): MobileTo
   if (pathname === ADMIN_NOTE_PICKER_HREF) return { title: "새 노트", back: { href: ADMIN_NOTES_HREF, label: "노트 목록으로" } };
   if (pathname === ADMIN_ASSIGNMENTS_HREF) return { title: "과제", action: { href: ADMIN_ASSIGNMENT_PICKER_HREF, label: "과제 내기" } };
   if (pathname === ADMIN_DIGGING_HREF) return { title: "디깅" };
+  if (pathname === ADMIN_MEMOS_HREF) return { title: "메모" };
   if (pathname === ADMIN_ASSIGNMENT_PICKER_HREF) return { title: "과제 내기", back: { href: ADMIN_ASSIGNMENTS_HREF, label: "과제로" } };
   if (pathname.startsWith("/dashboard/student/assignments/")) {
     return { title: "과제", back: { href: ADMIN_ASSIGNMENTS_HREF, label: "과제로" } };

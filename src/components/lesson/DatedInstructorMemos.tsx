@@ -25,13 +25,13 @@ export function formatMemoDate(key: string): string {
   return `${month}.${date} (${WEEKDAYS[(((day + 4) % 7) + 7) % 7]})`;
 }
 
-function shiftKey(key: string, days: number): string {
+export function shiftMemoDateKey(key: string, days: number): string {
   const day = dayNumberFromKey(key);
   return day === null ? key : dayKeyFromNumber(day + days);
 }
 
 /** 목록 미리보기: 태그를 빼고 한 줄로. */
-function excerpt(html: string): string {
+export function memoExcerpt(html: string): string {
   return htmlToPlainText(html.replace(/<\/(li|h\d|blockquote)>/giu, " ")).replace(/\s+/gu, " ").trim();
 }
 
@@ -103,7 +103,7 @@ export function DatedInstructorMemos({
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1">
-          <Button type="button" size="icon" variant="ghost" aria-label="전날" onClick={() => open(shiftKey(date, -1))}>
+          <Button type="button" size="icon" variant="ghost" aria-label="전날" onClick={() => open(shiftMemoDateKey(date, -1))}>
             <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />
           </Button>
           <label className="inline-flex items-center">
@@ -116,7 +116,7 @@ export function DatedInstructorMemos({
               className="h-9 rounded-md border border-input bg-background px-2 text-ui tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
-          <Button type="button" size="icon" variant="ghost" aria-label="다음 날" onClick={() => open(shiftKey(date, 1))}>
+          <Button type="button" size="icon" variant="ghost" aria-label="다음 날" onClick={() => open(shiftMemoDateKey(date, 1))}>
             <ChevronRight className="size-4" strokeWidth={1.8} aria-hidden="true" />
           </Button>
         </div>
@@ -175,7 +175,7 @@ export function DatedInstructorMemos({
                 <span className="w-[5.5rem] shrink-0 text-xs font-medium tabular-nums text-secondary-foreground">
                   {formatMemoDate(item.date)}
                 </span>
-                <span className="line-clamp-1 min-w-0 text-ui text-muted-foreground">{excerpt(item.contentHtml) || "내용 없음"}</span>
+                <span className="line-clamp-1 min-w-0 text-ui text-muted-foreground">{memoExcerpt(item.contentHtml) || "내용 없음"}</span>
               </button>
             </li>
           ))}

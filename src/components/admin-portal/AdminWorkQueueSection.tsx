@@ -4,13 +4,14 @@ import { PushPromptBanner } from "@/components/push/PushPromptBanner";
 import { useRef, useState } from "react";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Check, FileText } from "lucide-react";
+import { Check, FileText, NotebookPen } from "lucide-react";
 import { setAssignmentReviewed } from "@/lib/actions/assignment-review";
 import { buildGroupLessonNoteLink, buildLessonNoteLink, LESSON_NOTE_LINK_CLASS } from "@/lib/lesson-note-links";
 import { GroupLessonBadge } from "@/components/calendar/GroupLessonBadge";
 import type { LessonGroupSummary } from "@/lib/lesson-group-rules";
 import { ADMIN_WORK_QUEUE_PATH, buildAssignmentQueueHref, buildQnaQueueHref } from "@/lib/admin-work-queue";
-import { ADMIN_ASSIGNMENTS_HREF } from "@/components/app-shell/navigation";
+import { ADMIN_ASSIGNMENTS_HREF, buildAdminMemoHref } from "@/components/app-shell/navigation";
+import { kstTodayKey } from "@/lib/assignment-recurrence";
 import { UndoToast, type UndoToastMessage } from "@/components/ui/undo-toast";
 import {
   getAdminWorkQueue,
@@ -453,6 +454,15 @@ function UpcomingLessonItem({
             {row.student.currentModule || "진도 미지정"}
           </span>
         ) : null}
+      </Link>
+      <Link
+        href={buildAdminMemoHref({ date: kstTodayKey(row.at), studentId: row.kind === "group" ? null : row.student.id })}
+        aria-label={`${row.kind === "group" ? `${name} 그룹레슨` : name} ${formatKstDot(row.at, { referenceTime })} 메모`}
+        className={cn(LESSON_NOTE_LINK_CLASS, link ? null : "md:mr-1")}
+      >
+        <NotebookPen className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+        {/* 좁은 화면은 줄 폭이 좁아 아이콘만 보인다(접근 이름은 aria-label). */}
+        <span className="max-md:sr-only">메모</span>
       </Link>
       {link ? (
         <Link
